@@ -1,0 +1,29 @@
+{
+  "name": "resourcex",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "node-agent",
+    "backend",
+    "dashboard",
+    "cli"
+  ],
+  "scripts": {
+    "redis:up": "docker compose up -d",
+    "redis:down": "docker compose down",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:dashboard": "cd dashboard && npm run dev",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:dashboard\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0",
+    "nodemon": "^3.1.14"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "helmet": "^8.1.0",
+    "morgan": "^1.10.1"
+  }
+}

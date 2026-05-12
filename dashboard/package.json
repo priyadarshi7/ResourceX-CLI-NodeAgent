@@ -1,0 +1,8 @@
+{
+  "name": "resourcex-dashboard",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "node -e \"console.log('Dashboard workspace placeholder. Use API + WS for now.'); process.exit(0);\""
+  }
+}

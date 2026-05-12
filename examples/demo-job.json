@@ -1,0 +1,11 @@
+{
+  "jobId": "demo_ml_001",
+  "type": "ml_training",
+  "image": "python:3.10-alpine",
+  "command": "python -c \"print(10+10)\"",
+  "parallelism": 1,
+  "constraints": {
+    "latency": "low",
+    "reliability": "high"
+  }
+}

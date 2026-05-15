@@ -1,0 +1,1 @@
+{"root":["./src/main.tsx","./src/lib/config.ts","./src/lib/http.ts","./src/lib/types.ts","./src/ui/app.tsx","./src/ui/jobsview.tsx","./src/ui/logincard.tsx","./src/ui/nodesview.tsx","./src/ui/auth.ts","./src/ui/useinterval.ts"],"version":"5.9.3"}

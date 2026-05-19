@@ -12,20 +12,50 @@ type DatasetMeta = {
 };
 
 type AggregatedMlResult = {
+  mode?: string;
   aggregated?: Record<string, unknown> | null;
+  winner?: {
+    algorithmId: string;
+    algorithmName: string;
+    shardIndex: number;
+    nodeId?: string | null;
+    metrics?: Record<string, unknown>;
+  } | null;
+  leaderboard?: {
+    rank: number;
+    algorithmId: string;
+    algorithmName: string;
+    shardIndex: number;
+    nodeId?: string | null;
+    metrics?: Record<string, unknown>;
+    outputPreview?: string;
+  }[];
   shards?: {
     shardIndex: number;
+    algorithmId?: string;
+    algorithmName?: string;
+    nodeId?: string | null;
     metrics?: Record<string, unknown> | null;
     outputPreview?: string;
   }[];
 };
 
+type ArenaAlgorithm = {
+  id: string;
+  name: string;
+  description: string;
+};
+
+type StudioMode = "standard" | "arena";
+
 type StudioSession = {
   jobId: string;
   log: string[];
+  mode?: StudioMode;
 };
 
 const SESSION_KEY = "resourcex_studio_session";
+const MODE_KEY = "resourcex_studio_mode";
 
 const IRIS_NOTEBOOK_CODE = `print("[ResourceX] Iris training script starting (fast sklearn)", flush=True)
 
@@ -112,16 +142,31 @@ function loadSession(): StudioSession | null {
   }
 }
 
-function saveSession(jobId: string, log: string[]) {
+function saveSession(jobId: string, log: string[], mode?: StudioMode) {
   if (!jobId) return;
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify({ jobId, log }));
+  sessionStorage.setItem(
+    SESSION_KEY,
+    JSON.stringify({ jobId, log, mode: mode ?? loadStudioMode() }),
+  );
+}
+
+function loadStudioMode(): StudioMode {
+  try {
+    const m = sessionStorage.getItem(MODE_KEY);
+    return m === "arena" ? "arena" : "standard";
+  } catch {
+    return "standard";
+  }
 }
 
 export function StudioView(props: { token: string; active?: boolean }) {
   const saved = useMemo(() => loadSession(), []);
+  const [studioMode, setStudioMode] = useState<StudioMode>(loadStudioMode);
   const [cells, setCells] = useState<Cell[]>(DEFAULT_CELLS);
   const [datasets, setDatasets] = useState<DatasetMeta[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [algorithms, setAlgorithms] = useState<ArenaAlgorithm[]>([]);
+  const [selectedAlgoIds, setSelectedAlgoIds] = useState<string[]>([]);
   const [epochs, setEpochs] = useState(5);
   const [parallelism, setParallelism] = useState(1);
   const [parallelismTouched, setParallelismTouched] = useState(false);
@@ -233,6 +278,28 @@ export function StudioView(props: { token: string; active?: boolean }) {
     loadDatasets().catch((e) => setError(toMsg(e)));
   }, [loadDatasets]);
 
+  useEffect(() => {
+    jsonRequest<{ algorithms: ArenaAlgorithm[] }>(
+      "/api/studio/arena/algorithms",
+      { token: props.token },
+    )
+      .then((res) => {
+        setAlgorithms(res.algorithms);
+        setSelectedAlgoIds((prev) =>
+          prev.length
+            ? prev
+            : res.algorithms.slice(0, 4).map((a) => a.id),
+        );
+      })
+      .catch(() => {
+        /* arena list optional until backend restarts */
+      });
+  }, [props.token]);
+
+  useEffect(() => {
+    sessionStorage.setItem(MODE_KEY, studioMode);
+  }, [studioMode]);
+
   // Restore last job on mount
   useEffect(() => {
     if (!saved?.jobId) return;
@@ -288,7 +355,7 @@ export function StudioView(props: { token: string; active?: boolean }) {
     ]);
   }
 
-  async function runOnResourceX() {
+  async function dispatchTrain(body: Record<string, unknown>) {
     if (!selectedIds.length) {
       setError("Upload and select at least one dataset");
       return;
@@ -304,26 +371,27 @@ export function StudioView(props: { token: string; active?: boolean }) {
         parallelism?: number;
         datasetShards?: number;
         framework?: string;
+        mode?: string;
+        algorithms?: string[];
+        note?: string;
+        warning?: string;
       }>("/api/studio/train", {
         token: props.token,
-        body: {
-          cells,
-          datasetIds: selectedIds,
-          hyperparameters: { epochs, batch_size: 32, lr: 0.01 },
-          parallelism,
-          resources: { cpus: 2, memory: "4g", network: true, timeout: 3600000 },
-        },
+        body,
       });
       setJobId(res.jobId);
-      saveSession(res.jobId, []);
+      saveSession(res.jobId, [], studioMode);
       pushLog(
         res.message ||
-          `Job ${res.jobId} queued (${res.parallelism ?? parallelism} task(s), ${res.datasetShards ?? shardCount} shard(s), ${res.framework ?? "auto"} deps)`,
+          `Job ${res.jobId} queued (${res.parallelism ?? parallelism} task(s))`,
       );
-      const warn = (res as { warning?: string }).warning;
-      if (warn) {
-        pushLog(`⚠ ${warn}`);
-        setError(warn);
+      if (res.mode === "arena" && res.algorithms?.length) {
+        pushLog(`Algorithms: ${res.algorithms.join(", ")}`);
+      }
+      if (res.note) pushLog(`ℹ ${res.note}`);
+      if (res.warning) {
+        pushLog(`⚠ ${res.warning}`);
+        setError(res.warning);
       }
       connectWs(res.jobId);
       await refreshJob(res.jobId);
@@ -334,6 +402,30 @@ export function StudioView(props: { token: string; active?: boolean }) {
     }
   }
 
+  async function runOnResourceX() {
+    await dispatchTrain({
+      mode: "standard",
+      cells,
+      datasetIds: selectedIds,
+      hyperparameters: { epochs, batch_size: 32, lr: 0.01 },
+      parallelism,
+      resources: { cpus: 2, memory: "4g", network: true, timeout: 3600000 },
+    });
+  }
+
+  async function runAlgorithmArena() {
+    if (!selectedAlgoIds.length) {
+      setError("Select at least one algorithm for the arena");
+      return;
+    }
+    await dispatchTrain({
+      mode: "arena",
+      datasetIds: selectedIds,
+      algorithmIds: selectedAlgoIds,
+      resources: { cpus: 2, memory: "4g", network: true, timeout: 3600000 },
+    });
+  }
+
   function toggleDataset(id: string) {
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
@@ -341,49 +433,87 @@ export function StudioView(props: { token: string; active?: boolean }) {
   }
 
   const mlResult = parseMlResult(status?.result);
+  const isArena = studioMode === "arena";
+  const arenaResult = mlResult?.mode === "arena" ? mlResult : null;
+
+  function toggleAlgo(id: string) {
+    setSelectedAlgoIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
 
   return (
     <div className="rx-studio">
       <div className="rx-studio-toolbar">
+        <div className="rx-studio-mode-toggle" role="group" aria-label="Studio mode">
+          <button
+            type="button"
+            className={studioMode === "standard" ? "active" : ""}
+            onClick={() => setStudioMode("standard")}
+          >
+            Notebook
+          </button>
+          <button
+            type="button"
+            className={studioMode === "arena" ? "active" : ""}
+            onClick={() => setStudioMode("arena")}
+          >
+            Algorithm Arena
+          </button>
+        </div>
         <button
           className="rx-btn rx-btn-primary"
           disabled={busy}
-          onClick={runOnResourceX}
+          onClick={isArena ? runAlgorithmArena : runOnResourceX}
         >
-          {busy ? "Dispatching…" : "▶ Run on ResourceX"}
+          {busy
+            ? "Dispatching…"
+            : isArena
+              ? "▶ Run Algorithm Arena"
+              : "▶ Run on ResourceX"}
         </button>
-        <button className="rx-btn" type="button" onClick={addCodeCell}>
-          + Code cell
-        </button>
-        <label className="rx-studio-field">
-          Epochs
-          <input
-            type="number"
-            min={1}
-            max={500}
-            value={epochs}
-            onChange={(e) => setEpochs(Number(e.target.value))}
-          />
-        </label>
-        <label
-          className="rx-studio-field"
-          title="Tasks dispatched to nodes. Defaults to file count; for one file, increase to split rows."
-        >
-          Parallelism
-          <input
-            type="number"
-            min={1}
-            max={32}
-            value={parallelism}
-            onChange={(e) => {
-              setParallelismTouched(true);
-              setParallelism(Number(e.target.value));
-            }}
-          />
-        </label>
-        <span className="rx-studio-hint" style={{ alignSelf: "center" }}>
-          {shardCount} file shard(s)
-        </span>
+        {!isArena ? (
+          <button className="rx-btn" type="button" onClick={addCodeCell}>
+            + Code cell
+          </button>
+        ) : null}
+        {!isArena ? (
+          <>
+            <label className="rx-studio-field">
+              Epochs
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={epochs}
+                onChange={(e) => setEpochs(Number(e.target.value))}
+              />
+            </label>
+            <label
+              className="rx-studio-field"
+              title="Tasks dispatched to nodes. Defaults to file count; for one file, increase to split rows."
+            >
+              Parallelism
+              <input
+                type="number"
+                min={1}
+                max={32}
+                value={parallelism}
+                onChange={(e) => {
+                  setParallelismTouched(true);
+                  setParallelism(Number(e.target.value));
+                }}
+              />
+            </label>
+            <span className="rx-studio-hint" style={{ alignSelf: "center" }}>
+              {shardCount} file shard(s)
+            </span>
+          </>
+        ) : (
+          <span className="rx-studio-hint" style={{ alignSelf: "center" }}>
+            {selectedAlgoIds.length} algorithm(s) → one node each
+          </span>
+        )}
         {jobId ? (
           <span className="rx-studio-jobid">
             Job <code>{jobId}</code>
@@ -397,8 +527,9 @@ export function StudioView(props: { token: string; active?: boolean }) {
         <aside className="rx-studio-sidebar">
           <h3>Datasets</h3>
           <p className="rx-studio-hint">
-            Upload CSV / Parquet / ZIP. Each file becomes a shard on a separate
-            node when parallelism matches file count.
+            {isArena
+              ? "Arena runs every selected algorithm on the full dataset (first file if multiple)."
+              : "Upload CSV / Parquet / ZIP. Each file becomes a shard on a separate node when parallelism matches file count."}
           </p>
           <input
             ref={fileRef}
@@ -436,9 +567,40 @@ export function StudioView(props: { token: string; active?: boolean }) {
               <li className="rx-studio-empty">No datasets yet</li>
             ) : null}
           </ul>
+          {isArena ? (
+            <>
+              <h3 style={{ marginTop: 16 }}>Algorithms</h3>
+              <p className="rx-studio-hint">
+                Each algorithm is sent to a different node. The winner is chosen
+                by highest accuracy.
+              </p>
+              <ul className="rx-studio-algo-list">
+                {algorithms.map((a) => (
+                  <li key={a.id}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={selectedAlgoIds.includes(a.id)}
+                        onChange={() => toggleAlgo(a.id)}
+                      />
+                      <span>
+                        {a.name}
+                        <span className="rx-studio-algo-desc">{a.description}</span>
+                      </span>
+                    </label>
+                  </li>
+                ))}
+                {!algorithms.length ? (
+                  <li className="rx-studio-empty">
+                    Restart backend to load arena algorithms
+                  </li>
+                ) : null}
+              </ul>
+            </>
+          ) : null}
         </aside>
 
-        <main className="rx-studio-editor">
+        <main className="rx-studio-editor" hidden={isArena}>
           <h3>Notebook</h3>
           {cells.map((cell) =>
             cell.type === "markdown" ? (
@@ -468,8 +630,29 @@ export function StudioView(props: { token: string; active?: boolean }) {
           )}
         </main>
 
+        {isArena ? (
+          <main className="rx-studio-editor">
+            <h3>Algorithm Arena</h3>
+            <p className="rx-studio-hint">
+              Select a dataset and one or more algorithms, then run the arena.
+              Each node trains on the <strong>same</strong> data with a different
+              classifier. When all tasks finish, the best accuracy wins.
+            </p>
+            <ul className="rx-studio-algo-list">
+              {algorithms
+                .filter((a) => selectedAlgoIds.includes(a.id))
+                .map((a) => (
+                  <li key={a.id}>
+                    <strong>{a.name}</strong>
+                    <span className="rx-studio-algo-desc">{a.description}</span>
+                  </li>
+                ))}
+            </ul>
+          </main>
+        ) : null}
+
         <aside className="rx-studio-output">
-          <h3>Training output</h3>
+          <h3>{isArena ? "Arena results" : "Training output"}</h3>
           {status ? (
             <div className="rx-studio-status">
               <div>
@@ -488,23 +671,66 @@ export function StudioView(props: { token: string; active?: boolean }) {
               {status.error ? (
                 <p className="rx-studio-error">{status.error}</p>
               ) : null}
+              {arenaResult?.winner ? (
+                <div className="rx-studio-arena-winner">
+                  Winner: <strong>{arenaResult.winner.algorithmName}</strong>
+                  {arenaResult.winner.metrics?.accuracy != null ? (
+                    <>
+                      {" "}
+                      — accuracy{" "}
+                      {Number(arenaResult.winner.metrics.accuracy).toFixed(4)}
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+              {arenaResult?.leaderboard?.length ? (
+                <div className="rx-studio-metrics">
+                  <strong>Leaderboard</strong>
+                  <ul className="rx-studio-leaderboard">
+                    {arenaResult.leaderboard.map((row) => (
+                      <li
+                        key={row.algorithmId}
+                        className={row.rank === 1 ? "winner" : ""}
+                      >
+                        #{row.rank} {row.algorithmName}
+                        {row.metrics?.accuracy != null
+                          ? `: ${Number(row.metrics.accuracy).toFixed(4)}`
+                          : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               {status.tasks?.length ? (
                 <ul className="rx-studio-task-list">
-                  {status.tasks.map((t) => (
-                    <li key={t.taskId}>
-                      Shard {t.shardIndex}: {t.status}
-                      {t.nodeId ? ` @ ${t.nodeId.slice(0, 8)}…` : ""}
-                    </li>
-                  ))}
+                  {status.tasks.map((t) => {
+                    const algo = algorithms.find((a) => a.id === t.algorithmId);
+                    const shardRow = arenaResult?.shards?.find(
+                      (s) => s.shardIndex === t.shardIndex,
+                    );
+                    const preview =
+                      shardRow?.outputPreview ||
+                      (typeof t.result === "string" ? t.result : "");
+                    return (
+                      <li key={t.taskId}>
+                        {algo?.name ?? t.algorithmId ?? `Task ${t.shardIndex}`}:{" "}
+                        {t.status}
+                        {t.nodeId ? ` @ ${t.nodeId.slice(0, 8)}` : ""}
+                        {preview && t.status === "completed" ? (
+                          <pre className="rx-studio-task-log">{preview}</pre>
+                        ) : null}
+                      </li>
+                    );
+                  })}
                 </ul>
               ) : null}
-              {mlResult?.aggregated ? (
+              {!arenaResult && mlResult?.aggregated ? (
                 <div className="rx-studio-metrics">
                   <strong>Aggregated metrics</strong>
                   <pre>{JSON.stringify(mlResult.aggregated, null, 2)}</pre>
                 </div>
               ) : null}
-              {status.result != null ? (
+              {status.result != null && !arenaResult ? (
                 <pre className="rx-studio-result">
                   {formatJobResult(status.result, mlResult)}
                 </pre>
@@ -528,7 +754,14 @@ export function StudioView(props: { token: string; active?: boolean }) {
 function parseMlResult(result: unknown): AggregatedMlResult | null {
   if (!result || typeof result !== "object") return null;
   const r = result as AggregatedMlResult;
-  if (r.aggregated !== undefined || r.shards !== undefined) return r;
+  if (
+    r.mode === "arena" ||
+    r.aggregated !== undefined ||
+    r.shards !== undefined ||
+    r.leaderboard !== undefined
+  ) {
+    return r;
+  }
   return null;
 }
 
@@ -536,13 +769,17 @@ function formatJobResult(
   result: unknown,
   mlResult: AggregatedMlResult | null,
 ): string {
+  if (mlResult?.mode === "arena") {
+    return "";
+  }
   if (mlResult?.shards?.length) {
     const previews = mlResult.shards
       .filter((s) => s.outputPreview)
-      .map(
-        (s) =>
-          `--- shard ${s.shardIndex} ---\n${s.outputPreview}`,
-      );
+      .map((s) => {
+        const label =
+          s.algorithmName || s.algorithmId || `shard ${s.shardIndex}`;
+        return `--- ${label} ---\n${s.outputPreview}`;
+      });
     if (previews.length) return previews.join("\n\n");
   }
   if (typeof result === "string") return result;

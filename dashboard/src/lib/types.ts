@@ -27,6 +27,7 @@ export type AdminStats = {
 export type JobTask = {
   taskId: string;
   shardIndex: number;
+  algorithmId?: string | null;
   status: string;
   nodeId?: string | null;
   progress?: number;

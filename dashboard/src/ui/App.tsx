@@ -535,6 +535,86 @@ const styles = `
   .rx-studio-task-list li {
     padding: 2px 0;
   }
+  .rx-studio-mode-toggle {
+    display: inline-flex;
+    border: 1px solid var(--rx-border);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-right: 8px;
+  }
+  .rx-studio-mode-toggle button {
+    border: none;
+    background: transparent;
+    color: var(--rx-text-muted);
+    padding: 8px 14px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .rx-studio-mode-toggle button.active {
+    background: var(--rx-accent);
+    color: #fff;
+  }
+  .rx-studio-arena-winner {
+    margin: 10px 0;
+    padding: 12px;
+    border-radius: 6px;
+    background: rgba(34, 197, 94, 0.12);
+    border: 1px solid rgba(34, 197, 94, 0.35);
+    font-size: 13px;
+  }
+  .rx-studio-arena-winner strong {
+    color: #4ade80;
+  }
+  .rx-studio-algo-list {
+    list-style: none;
+    margin: 10px 0 0;
+    padding: 0;
+  }
+  .rx-studio-algo-list li {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--rx-border);
+  }
+  .rx-studio-algo-list li:last-child {
+    border-bottom: none;
+  }
+  .rx-studio-algo-list label {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .rx-studio-algo-desc {
+    display: block;
+    font-size: 11px;
+    color: var(--rx-text-muted);
+    margin-top: 2px;
+  }
+  .rx-studio-leaderboard {
+    list-style: none;
+    margin: 8px 0;
+    padding: 0;
+    font-size: 12px;
+  }
+  .rx-studio-leaderboard li {
+    padding: 4px 0;
+    font-family: var(--rx-mono);
+  }
+  .rx-studio-leaderboard li.winner {
+    color: #4ade80;
+    font-weight: 600;
+  }
+  .rx-studio-task-log {
+    margin-top: 6px;
+    font-size: 11px;
+    max-height: 120px;
+    overflow: auto;
+    white-space: pre-wrap;
+    background: var(--rx-bg);
+    border: 1px solid var(--rx-border);
+    border-radius: 4px;
+    padding: 6px;
+  }
   [hidden] {
     display: none !important;
   }

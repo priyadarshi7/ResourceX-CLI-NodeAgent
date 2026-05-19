@@ -1,5 +1,7 @@
 "use strict";
 
+const { buildArenaScript, getArenaAlgorithm } = require("./arenaAlgorithms");
+
 /** Public image that always exists on Docker Hub (PyTorch installed via pip in entrypoint). */
 const DEFAULT_ML_IMAGE =
   process.env.RESOURCEX_ML_IMAGE || "python:3.11-slim";
@@ -33,7 +35,12 @@ function normalizeMlTrainingJob(body) {
     Number(body.parallelism) || dataset.shards.length || 1,
   );
 
-  if (dataset.shards.length > 1 && parallelism > dataset.shards.length) {
+  const arena = body.arena?.enabled ? body.arena : null;
+  if (
+    !arena &&
+    dataset.shards.length > 1 &&
+    parallelism > dataset.shards.length
+  ) {
     throw new Error(
       `parallelism (${parallelism}) cannot exceed dataset shard count (${dataset.shards.length})`,
     );
@@ -50,6 +57,7 @@ function normalizeMlTrainingJob(body) {
     dataset,
     training,
     ml: true,
+    arena,
     submittedBy: body.submittedBy,
   };
 }
@@ -173,6 +181,15 @@ function isMlTrainingJob(body) {
  * Row-level sharding: same data on each node, slice rows by task index.
  */
 function resolveShardAssignment(job, task) {
+  if (job.arena?.enabled) {
+    const urlShards = job.dataset.shards;
+    return {
+      shard: urlShards[0],
+      shardIndex: 0,
+      shardCount: 1,
+    };
+  }
+
   const urlShards = job.dataset.shards;
   const parallelism = job.parallelism;
   const taskIndex = task.shardIndex;
@@ -205,6 +222,12 @@ function resolveShardAssignment(job, task) {
  */
 function buildMlTaskPayload(job, task) {
   const { shard, shardIndex, shardCount } = resolveShardAssignment(job, task);
+  const training = { ...job.training };
+  if (job.arena?.enabled && task.algorithmId) {
+    training.scriptInline = buildArenaScript(task.algorithmId);
+    const meta = getArenaAlgorithm(task.algorithmId);
+    if (meta) training.algorithmName = meta.name;
+  }
 
   return {
     workloadType: "ml_training",
@@ -213,11 +236,12 @@ function buildMlTaskPayload(job, task) {
     timeout: job.resources.timeout,
     shardIndex: task.shardIndex,
     jobId: job.jobId,
+    algorithmId: task.algorithmId || null,
     ml: {
       jobId: job.jobId,
       shardIndex,
       shardCount,
-      training: job.training,
+      training,
       dataset: {
         ...job.dataset,
         shard,

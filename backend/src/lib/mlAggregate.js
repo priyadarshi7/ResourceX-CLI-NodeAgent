@@ -125,8 +125,82 @@ function truncateOutput(text, maxLen) {
   return text.slice(0, maxLen) + "\n…(truncated)";
 }
 
+/**
+ * Compare arena runs on the same dataset; pick highest accuracy.
+ * @param {Array<{ shardIndex: number, result: string, nodeId?: string, algorithmId?: string }>} parts
+ */
+function pickArenaWinner(parts) {
+  const entries = parts
+    .map((p) => {
+      const metrics = parseMetricsFromOutput(p.result);
+      if (!metrics) return null;
+      return {
+        shardIndex: p.shardIndex,
+        nodeId: p.nodeId ?? null,
+        algorithmId: metrics.algorithm || p.algorithmId || `shard_${p.shardIndex}`,
+        algorithmName:
+          metrics.algorithmName || metrics.algorithm || p.algorithmId || "unknown",
+        metrics,
+        outputPreview: truncateOutput(p.result, 3000),
+      };
+    })
+    .filter(Boolean);
+
+  entries.sort((a, b) => {
+    const accA = Number(a.metrics.accuracy ?? -1);
+    const accB = Number(b.metrics.accuracy ?? -1);
+    if (accB !== accA) return accB - accA;
+    const lossA = Number(a.metrics.loss ?? Infinity);
+    const lossB = Number(b.metrics.loss ?? Infinity);
+    return lossA - lossB;
+  });
+
+  const leaderboard = entries.map((e, rank) => ({
+    rank: rank + 1,
+    algorithmId: e.algorithmId,
+    algorithmName: e.algorithmName,
+    shardIndex: e.shardIndex,
+    nodeId: e.nodeId,
+    metrics: e.metrics,
+    outputPreview: e.outputPreview,
+  }));
+
+  const winner = leaderboard[0] || null;
+  return { winner, leaderboard };
+}
+
+function aggregateArenaResults(parts) {
+  const { winner, leaderboard } = pickArenaWinner(parts);
+  const shards = leaderboard.map((row) => ({
+    shardIndex: row.shardIndex,
+    metrics: row.metrics,
+    algorithmId: row.algorithmId,
+    algorithmName: row.algorithmName,
+    nodeId: row.nodeId,
+    outputPreview: row.outputPreview,
+  }));
+
+  return {
+    mode: "arena",
+    winner: winner
+      ? {
+          algorithmId: winner.algorithmId,
+          algorithmName: winner.algorithmName,
+          shardIndex: winner.shardIndex,
+          nodeId: winner.nodeId,
+          metrics: winner.metrics,
+        }
+      : null,
+    leaderboard,
+    shards,
+    aggregated: winner?.metrics ?? null,
+  };
+}
+
 module.exports = {
   parseMetricsFromOutput,
   aggregateMlResults,
+  aggregateArenaResults,
+  pickArenaWinner,
   METRICS_PREFIX,
 };

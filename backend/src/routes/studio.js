@@ -20,6 +20,10 @@ const {
   detectTrainingFramework,
   buildStudioEntrypoint,
 } = require("../lib/mlJobs");
+const {
+  listArenaAlgorithms,
+  resolveArenaAlgorithms,
+} = require("../lib/arenaAlgorithms");
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -108,7 +112,17 @@ function createStudioRouter(rt) {
     res.status(201).json(nb);
   });
 
+  r.get("/arena/algorithms", (_req, res) => {
+    res.json({ algorithms: listArenaAlgorithms() });
+  });
+
   r.post("/train", async (req, res) => {
+    const mode = req.body.mode === "arena" ? "arena" : "standard";
+    if (mode === "arena") {
+      await handleArenaTrain(req, res, rt);
+      return;
+    }
+
     const {
       code,
       cells,
@@ -230,6 +244,108 @@ function createStudioRouter(rt) {
   });
 
   return r;
+}
+
+async function handleArenaTrain(req, res, rt) {
+  const { datasetIds, algorithmIds, jobId, resources } = req.body;
+  const ids = Array.isArray(datasetIds) ? datasetIds : [];
+  if (!ids.length) {
+    res.status(400).json({ error: "Select or upload at least one dataset" });
+    return;
+  }
+
+  let algorithmList;
+  try {
+    algorithmList = resolveArenaAlgorithms(algorithmIds);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+    return;
+  }
+
+  const baseUrl = getPublicBaseUrl(req);
+  const urls = [];
+  for (const datasetId of ids) {
+    const ds = await getDataset(datasetId, req.user.email);
+    if (!ds) {
+      res.status(400).json({ error: `Dataset not found: ${datasetId}` });
+      return;
+    }
+    for (const f of ds.files) {
+      const { token } = signFileAccess(f.fileId, 86400);
+      const name = f.name || "data.csv";
+      urls.push({
+        url: `${baseUrl}/api/studio/files/${f.fileId}?access=${token}`,
+        filename: name,
+      });
+    }
+  }
+
+  const arenaUrls = urls.length > 1 ? [urls[0]] : urls;
+  const multiFileNote =
+    urls.length > 1
+      ? "Arena uses the first dataset file only so every algorithm trains on the same data."
+      : undefined;
+
+  let spec;
+  try {
+    spec = normalizeMlTrainingJob({
+      jobId: jobId || `arena_${Date.now()}`,
+      type: "ml_training",
+      parallelism: algorithmList.length,
+      dataset: { source: "urls", urls: arenaUrls },
+      training: {
+        framework: "sklearn",
+        scriptInline: "# per-task script injected by arena",
+        entrypoint: buildStudioEntrypoint("sklearn"),
+        hyperparameters: { epochs: 1 },
+      },
+      resources: {
+        cpus: 2,
+        memory: "4g",
+        timeout: 3600000,
+        network: true,
+        ...(resources || {}),
+      },
+      constraints: { reliability: "medium" },
+      submittedBy: req.user.email,
+      arena: { enabled: true, algorithmIds: algorithmList },
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+    return;
+  }
+
+  const job = rt.jobRegistry.createJob(spec);
+  await rt.queue.add(
+    "dispatchJob",
+    { jobId: job.jobId },
+    { jobId: job.jobId, removeOnComplete: true, removeOnFail: false },
+  );
+  rt.scheduler.dispatchJobTasks(rt.jobRegistry.getJob(job.jobId) || job);
+
+  const host = req.get("host") || `localhost:${process.env.PORT || 4000}`;
+  const proto = req.secure ? "wss" : "ws";
+
+  const datasetUrlWarning = arenaUrls.some((u) =>
+    isLocalhostUrl(typeof u === "string" ? u : u.url),
+  )
+    ? "Dataset URLs use localhost — nodes on another machine cannot download files. Set PUBLIC_URL=http://<your-lan-ip>:4000 in backend .env and restart."
+    : undefined;
+
+  res.status(202).json({
+    jobId: job.jobId,
+    status: job.status,
+    type: job.type,
+    ml: true,
+    mode: "arena",
+    parallelism: job.parallelism,
+    algorithms: algorithmList,
+    ws: `${proto}://${host}/ws/jobs?token=<user_jwt>`,
+    message: "Algorithm Arena dispatched — one algorithm per node",
+    framework: "sklearn",
+    warning: datasetUrlWarning,
+    note: multiFileNote,
+  });
 }
 
 const IRIS_NOTEBOOK_CODE = `print("[ResourceX] Iris training (sklearn)", flush=True)

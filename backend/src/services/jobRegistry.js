@@ -38,9 +38,11 @@ class JobRegistry extends EventEmitter {
       error: null,
       confidenceScore: null,
       submittedBy: spec.submittedBy || null,
+      arena: spec.arena || null,
     };
 
     const taskIds = [];
+    const arenaIds = spec.arena?.algorithmIds || [];
     for (let i = 0; i < parallelism; i++) {
       const taskId = uuidv4();
       taskIds.push(taskId);
@@ -48,6 +50,7 @@ class JobRegistry extends EventEmitter {
         taskId,
         jobId,
         shardIndex: i,
+        algorithmId: arenaIds[i] ?? null,
         status: "queued",
         nodeId: null,
         logs: "",
@@ -106,7 +109,12 @@ class JobRegistry extends EventEmitter {
     const job = this.jobs.get(t.jobId);
     if (!job) return;
     job.completedTasks++;
-    job.results.push({ shardIndex: t.shardIndex, result });
+    job.results.push({
+      shardIndex: t.shardIndex,
+      result,
+      nodeId: t.nodeId,
+      algorithmId: t.algorithmId,
+    });
     if (job.completedTasks >= job.parallelism) {
       job.status = "completed";
       job.completedAt = Date.now();

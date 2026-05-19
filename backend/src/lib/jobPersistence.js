@@ -16,6 +16,7 @@ function snapshotJob(registry, jobId) {
     status: job.status,
     parallelism: job.parallelism,
     ml: !!job.ml,
+    arena: job.arena || null,
     completedTasks: job.completedTasks,
     results: job.results || [],
     error: job.error,
@@ -36,6 +37,7 @@ function snapshotJob(registry, jobId) {
     tasks: tasks.map((t) => ({
       taskId: t.taskId,
       shardIndex: t.shardIndex,
+      algorithmId: t.algorithmId || null,
       status: t.status,
       nodeId: t.nodeId,
       progress: t.progress,

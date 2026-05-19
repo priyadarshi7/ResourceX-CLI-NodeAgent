@@ -4,7 +4,7 @@ const express = require("express");
 const { body, validationResult } = require("express-validator");
 const { requireUserAuth } = require("../middleware/auth");
 const { isMlTrainingJob, normalizeMlTrainingJob } = require("../lib/mlJobs");
-const { aggregateMlResults } = require("../lib/mlAggregate");
+const { aggregateMlResults, aggregateArenaResults } = require("../lib/mlAggregate");
 const { loadPersistedJob } = require("../lib/jobPersistence");
 
 function createJobsRouter(rt) {
@@ -108,7 +108,11 @@ function createJobsRouter(rt) {
     const results = job.results || [];
     if (job.status === "completed" && results.length > 0) {
       const parts = [...results].sort((a, b) => a.shardIndex - b.shardIndex);
-      result = job.ml ? aggregateMlResults(parts) : parts[0].result;
+      if (job.arena?.enabled) {
+        result = aggregateArenaResults(parts);
+      } else {
+        result = job.ml ? aggregateMlResults(parts) : parts[0].result;
+      }
     }
 
     res.json({
@@ -117,6 +121,7 @@ function createJobsRouter(rt) {
       type: job.type,
       parallelism: job.parallelism,
       ml: job.ml || false,
+      arena: job.arena || undefined,
       dataset: job.dataset || undefined,
       training: job.training || undefined,
       completedTasks: job.completedTasks,
@@ -127,6 +132,7 @@ function createJobsRouter(rt) {
       tasks: tasks.map((t) => ({
         taskId: t.taskId,
         shardIndex: t.shardIndex,
+        algorithmId: t.algorithmId,
         status: t.status,
         nodeId: t.nodeId,
         progress: t.progress,

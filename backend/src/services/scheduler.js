@@ -2,7 +2,7 @@
 
 const { v4: uuidv4 } = require("uuid");
 const { buildMlTaskPayload } = require("../lib/mlJobs");
-const { aggregateMlResults } = require("../lib/mlAggregate");
+const { aggregateMlResults, aggregateArenaResults } = require("../lib/mlAggregate");
 
 /**
  * ACRS scheduling: trust-aware dispatch, challenge injection, task tracking.
@@ -325,6 +325,7 @@ class Scheduler {
 
   aggregate(job) {
     const parts = job.results.sort((a, b) => a.shardIndex - b.shardIndex);
+    if (job.arena?.enabled) return aggregateArenaResults(parts);
     if (job.ml) return aggregateMlResults(parts);
     if (parts.length === 1) return parts[0].result;
     return JSON.stringify(parts.map((p) => p.result));

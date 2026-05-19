@@ -228,11 +228,12 @@ class TaskExecutor {
         timeout,
         maxBuffer: 10 * 1024 * 1024,
       });
-      output = result.stdout;
+      output = [result.stdout, result.stderr].filter(Boolean).join("\n");
+      exitCode = 0;
       onProgress?.(0.9, "Execution complete");
     } catch (err) {
       exitCode = err.code || 1;
-      output = err.stdout || err.stderr || err.message;
+      output = [err.stdout, err.stderr, err.message].filter(Boolean).join("\n");
     }
 
     this.runningContainers.delete(taskId);

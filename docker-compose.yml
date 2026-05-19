@@ -32,6 +32,7 @@ services:
     ports:
       - "4000:4000"
     env_file:
+      - .env
       - ./backend/.env
     environment:
       PORT: "4000"

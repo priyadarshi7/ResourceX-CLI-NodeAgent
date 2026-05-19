@@ -50,7 +50,8 @@ class NodeStateStore extends EventEmitter {
       ...existing,
       nodeId,
       ...info,
-      challengeScore: existing.challengeScore ?? 0.5,
+      challengeScore:
+        info.challengeScore ?? existing.challengeScore ?? 0.5,
       trustTier: existing.trustTier ?? "COLD_START",
       failureRate: existing.failureRate ?? 0,
       tasksCompleted: existing.tasksCompleted ?? 0,
@@ -114,7 +115,17 @@ class NodeStateStore extends EventEmitter {
       failureRate,
     });
 
-    if (!success && failureRate > 0.4) {
+    if (success && node.status === "probation") {
+      node.status = "active";
+    }
+
+    // Cold-start: need several failures before probation (2/2 is too harsh for new LAN nodes)
+    const totalAttempts = challengesPassed + challengesFailed;
+    if (
+      !success &&
+      totalAttempts >= 4 &&
+      failureRate > 0.5
+    ) {
       node.status = "probation";
     }
 
@@ -185,6 +196,7 @@ class NodeStateStore extends EventEmitter {
   shouldChallenge(nodeId) {
     const node = this.nodes.get(nodeId);
     if (!node) return true;
+    if (node.status === "probation") return Math.random() < 0.85;
     const tier = TRUST_TIERS[node.trustTier] || TRUST_TIERS.COLD_START;
     const epsilon = 0.08;
     if (node.trustTier === "COLD_START") return Math.random() < 0.95;

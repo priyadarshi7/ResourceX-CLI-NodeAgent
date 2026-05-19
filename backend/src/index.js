@@ -1,6 +1,12 @@
 "use strict";
 
-require("dotenv").config();
+const path = require("path");
+const dotenv = require("dotenv");
+
+// Repo root .env (resourcex/.env) then backend/.env — latter overrides
+dotenv.config({ path: path.resolve(__dirname, "../../.env") });
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
+
 const http = require("http");
 const { createApp } = require("./app");
 const { initWebSocket } = require("./services/websocket");
@@ -64,6 +70,9 @@ async function main() {
     );
     console.log(`     Users   → collection "users" in that database`);
     console.log(`     HTTP    → http://localhost:${PORT}`);
+    console.log(
+      `     PUBLIC_URL → ${process.env.PUBLIC_URL || "(auto — set in .env for dataset downloads)"}`,
+    );
     console.log(`     Node WS → ws://localhost:${PORT}/ws/node?token=<jwt>`);
     console.log(`     Jobs WS → ws://localhost:${PORT}/ws/jobs?token=<jwt>\n`);
   });

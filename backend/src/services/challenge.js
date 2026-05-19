@@ -96,6 +96,17 @@ class ChallengeEngine {
     const output = typeof result === "string" ? result : JSON.stringify(result);
     const passed = challenge.verify(output, challenge.groundTruth);
 
+    if (!passed) {
+      console.warn(
+        `[challenge] FAIL node=${challenge.nodeId.slice(0, 8)}… name=${challenge.name} ` +
+          `output=${JSON.stringify(output.trim().slice(0, 120))}`,
+      );
+    } else {
+      console.log(
+        `[challenge] PASS node=${challenge.nodeId.slice(0, 8)}… name=${challenge.name}`,
+      );
+    }
+
     const latencyDeviation = executionTime
       ? Math.abs(executionTime - 2.0) / 2.0
       : 0;

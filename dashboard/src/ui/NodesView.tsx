@@ -481,11 +481,16 @@ export function NodesView(props: { token: string }) {
             </thead>
             <tbody>
               {nodes.map((n) => {
-                const dot = n.connected
-                  ? n.status === "probation"
+                const dot = !n.connected
+                  ? "bad"
+                  : n.status === "probation"
                     ? "warn"
-                    : "good"
-                  : "bad";
+                    : "good";
+                const statusLine = !n.connected
+                  ? "offline"
+                  : n.status === "active"
+                    ? "online"
+                    : n.status;
                 return (
                   <tr key={n.nodeId}>
                     <td>
@@ -496,11 +501,13 @@ export function NodesView(props: { token: string }) {
                       <div className="nv-status">
                         <span className={`nv-dot ${dot}`} />
                         <span className="nv-status-text">
-                          <strong>
-                            {n.connected ? "connected" : "offline"}
-                          </strong>
-                          {" · "}
-                          {n.status}
+                          <strong>{statusLine}</strong>
+                          {n.connected && n.status !== "active" ? (
+                            <>
+                              {" · "}
+                              {n.status}
+                            </>
+                          ) : null}
                         </span>
                       </div>
                     </td>

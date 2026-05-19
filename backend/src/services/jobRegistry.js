@@ -2,6 +2,7 @@
 
 const { EventEmitter } = require("events");
 const { v4: uuidv4 } = require("uuid");
+const { schedulePersistJob } = require("../lib/jobPersistence");
 
 /**
  * In-memory job + task graph for scheduling, aggregation, and user WS fan-out.
@@ -24,6 +25,10 @@ class JobRegistry extends EventEmitter {
       image: spec.image,
       command: spec.command,
       constraints: spec.constraints || {},
+      resources: spec.resources || null,
+      dataset: spec.dataset || null,
+      training: spec.training || null,
+      ml: !!spec.ml,
       status: "queued",
       parallelism,
       submittedAt: Date.now(),
@@ -32,6 +37,7 @@ class JobRegistry extends EventEmitter {
       results: [],
       error: null,
       confidenceScore: null,
+      submittedBy: spec.submittedBy || null,
     };
 
     const taskIds = [];
@@ -54,6 +60,7 @@ class JobRegistry extends EventEmitter {
     job.taskIds = taskIds;
     this.jobs.set(jobId, job);
     this.emit("jobCreated", job);
+    schedulePersistJob(this, jobId);
     return job;
   }
 
@@ -76,6 +83,7 @@ class JobRegistry extends EventEmitter {
       j.status = "running";
     }
     this.emit("taskAssigned", { taskId, nodeId, jobId: t.jobId });
+    schedulePersistJob(this, t.jobId);
     return t;
   }
 
@@ -104,6 +112,7 @@ class JobRegistry extends EventEmitter {
       job.completedAt = Date.now();
       job.confidenceScore = validated ? 0.95 : 0.75;
       this.emit("jobCompleted", job);
+      schedulePersistJob(this, job.jobId);
     } else {
       this.emit("jobProgress", {
         jobId: job.jobId,
@@ -115,6 +124,7 @@ class JobRegistry extends EventEmitter {
             return acc + (x?.status === "completed" ? 1 : x?.progress || 0);
           }, 0) / job.parallelism,
       });
+      schedulePersistJob(this, job.jobId);
     }
   }
 
@@ -128,6 +138,7 @@ class JobRegistry extends EventEmitter {
       job.status = "failed";
       job.error = error;
       this.emit("jobFailed", { job, taskId, error });
+      schedulePersistJob(this, job.jobId);
     }
   }
 

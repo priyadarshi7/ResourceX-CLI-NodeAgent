@@ -149,7 +149,14 @@ class NodeAgent {
   }
 
   async handleTaskDispatch(msg) {
-    const { taskId, image, command, timeout = 300_000 } = msg;
+    const {
+      taskId,
+      image,
+      command,
+      timeout = 300_000,
+      workloadType,
+      ml,
+    } = msg;
 
     // Duplicate TASK_DISPATCH for the same id can arrive before the first run
     // finishes (WS handler does not await). A second concurrent run would delete
@@ -163,8 +170,20 @@ class NodeAgent {
       return;
     }
 
-    // Tasks are intentionally indistinguishable (masked challenges vs real tasks)
-    console.log(chalk.gray(`  [TASK] ${taskId.slice(0, 8)}… dispatched`));
+    const isMl = workloadType === "ml_training" || !!ml;
+    const kind = isMl
+      ? chalk.magenta(" [ML]")
+      : chalk.dim(` [${workloadType || "challenge"}]`);
+    console.log(chalk.gray(`  [TASK] ${taskId.slice(0, 8)}… dispatched${kind}`));
+    if (isMl && ml?.dataset?.shard) {
+      const idx = ml.shardIndex ?? 0;
+      const total = ml.shardCount ?? ml.dataset?.shardCount ?? 1;
+      console.log(
+        chalk.gray(
+          `         shard ${idx + 1}/${total} · ${ml.dataset.source}`,
+        ),
+      );
+    }
 
     this.activeTasks.set(taskId, { startTime: Date.now(), status: "running" });
 
@@ -181,12 +200,23 @@ class NodeAgent {
         taskId,
         image,
         command,
-        timeout,
+        timeout: ml?.resources?.timeout || timeout,
+        workloadType,
+        ml: ml
+          ? {
+              ...ml,
+              shardIndex: msg.shardIndex ?? ml.shardIndex,
+              jobId: msg.jobId ?? ml.jobId,
+            }
+          : undefined,
         onProgress: (progress, logs) => {
+          if (logs) {
+            console.log(chalk.gray(`         ${logs}`));
+          }
           this.send({
             type: "TASK_PROGRESS",
             taskId,
-            progress,
+            progress: typeof progress === "number" ? progress : undefined,
             logs,
             status: "running",
           });
@@ -215,11 +245,21 @@ class NodeAgent {
       });
 
       this.stats.tasksCompleted++;
-      console.log(
-        chalk.green(
-          `  [TASK] ${taskId.slice(0, 8)}… completed (${(elapsed / 1000).toFixed(1)}s)`,
-        ),
-      );
+      if (isMl && result.exitCode !== 0) {
+        console.log(
+          chalk.yellow(
+            `  [TASK] ${taskId.slice(0, 8)}… finished with errors (exit ${result.exitCode}, ${(elapsed / 1000).toFixed(1)}s)`,
+          ),
+        );
+        const tail = (result.output || "").trim().slice(-1500);
+        if (tail) console.log(chalk.gray(tail));
+      } else {
+        console.log(
+          chalk.green(
+            `  [TASK] ${taskId.slice(0, 8)}… completed (${(elapsed / 1000).toFixed(1)}s)`,
+          ),
+        );
+      }
     } catch (err) {
       if (this.activeTasks.has(taskId)) {
         this.activeTasks.delete(taskId);

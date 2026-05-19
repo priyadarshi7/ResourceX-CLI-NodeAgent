@@ -6,6 +6,50 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Optional local MongoDB — only needed if MONGODB_URI in backend/.env points here
+  mongo:
+    image: mongo:7
+    profiles: ["local-mongo"]
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 8
+
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "4000:4000"
+    env_file:
+      - ./backend/.env
+    environment:
+      PORT: "4000"
+      HOST: "0.0.0.0"
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-dev-change-me-before-public-deploy}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      PUBLIC_URL: ${PUBLIC_URL:-http://host.docker.internal:4000}
+      STUDIO_UPLOAD_DIR: /data/studio-uploads
+    volumes:
+      - studio-uploads:/data/studio-uploads
+      # MONGODB_URI comes from backend/.env (Atlas or mongodb://mongo:27017/resourcex)
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   redis-data: {}
+  mongo-data: {}
+  studio-uploads: {}

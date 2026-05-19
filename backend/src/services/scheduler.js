@@ -1,6 +1,8 @@
 "use strict";
 
 const { v4: uuidv4 } = require("uuid");
+const { buildMlTaskPayload } = require("../lib/mlJobs");
+const { aggregateMlResults } = require("../lib/mlAggregate");
 
 /**
  * ACRS scheduling: trust-aware dispatch, challenge injection, task tracking.
@@ -41,6 +43,7 @@ class Scheduler {
   }
 
   tick() {
+    this.maybeDispatchWaitingJobs();
     const active = this.nodeStore.getActive();
     for (const node of active) {
       if (!this.nodeStore.shouldChallenge(node.nodeId)) continue;
@@ -69,12 +72,14 @@ class Scheduler {
 
   selectNodes(job, count) {
     const threshold = this.trustThreshold(job);
+    const needGpu = job.ml && job.resources?.requireGpu;
     const nodes = this.nodeStore
       .getActive()
       .filter(
         (n) =>
           n.challengeScore >= threshold &&
-          n.status !== "probation",
+          n.status !== "probation" &&
+          (!needGpu || n.gpu),
       )
       .sort((a, b) => {
         const loadA = (a.activeTasks || 0) + (a.cpuUsage || 0);
@@ -89,58 +94,109 @@ class Scheduler {
 
   dispatchJobTasks(job) {
     const tasks = this.jobs.listJobTasks(job.jobId);
-    const nodeIds = this.selectNodes(job, tasks.length);
+    const pending = tasks.filter((t) => t.status === "queued");
+    if (!pending.length) return;
+
+    const nodeIds = this.selectNodes(job, pending.length);
     if (!nodeIds.length) {
       const j = this.jobs.getJob(job.jobId);
-      if (j) j.status = "waiting_nodes";
+      if (j && j.status !== "running") j.status = "waiting_nodes";
       this.ws.broadcastJob(job.jobId, {
         type: "JOB_UPDATE",
         jobId: job.jobId,
         status: "waiting_nodes",
-        message: "No eligible nodes online. Will retry when nodes connect.",
+        message:
+          "No compute node connected via WebSocket. Start the node agent (node-resourcex start) and wait for 'Connected' before training.",
       });
+      console.warn(
+        `[scheduler] job ${job.jobId} waiting: 0 WS-connected nodes (${this.nodeStore.getActive().length} active in pool)`,
+      );
       return;
     }
-    tasks.forEach((task, i) => {
+
+    let sentCount = 0;
+    pending.forEach((task, i) => {
       const nodeId = nodeIds[i];
+      const timeout = job.resources?.timeout || 600_000;
+      const isMl = !!(job.ml && job.dataset);
+      const dispatch = isMl
+        ? {
+            type: "TASK_DISPATCH",
+            taskId: task.taskId,
+            ...buildMlTaskPayload(job, task),
+          }
+        : {
+            type: "TASK_DISPATCH",
+            taskId: task.taskId,
+            workloadType: job.type,
+            image: job.image,
+            command: job.command,
+            timeout,
+          };
+
+      const sent = this.ws.sendToNode(nodeId, dispatch);
+      if (!sent) {
+        console.warn(
+          `[scheduler] WS send failed job=${job.jobId} task=${task.taskId.slice(0, 8)} node=${nodeId.slice(0, 8)}`,
+        );
+        return;
+      }
+
       this.jobs.assignTask(task.taskId, nodeId);
       this.taskAssignments.set(task.taskId, nodeId);
-      const injectChallenge =
-        this.nodeStore.shouldChallenge(nodeId) && Math.random() < 0.35;
-      if (injectChallenge) {
-        const ch = this.challenges.createChallenge(nodeId);
-        this.ws.sendToNode(nodeId, {
-          type: "TASK_DISPATCH",
-          taskId: ch.taskId,
-          workloadType: ch.type,
-          image: ch.image,
-          command: ch.command,
-          timeout: 300_000,
-        });
+      sentCount++;
+
+      if (isMl) {
+        console.log(
+          `[scheduler] ML dispatch job=${job.jobId} task=${task.taskId.slice(0, 8)} -> node=${nodeId.slice(0, 8)} shard=${task.shardIndex}`,
+        );
       }
-      this.ws.sendToNode(nodeId, {
-        type: "TASK_DISPATCH",
-        taskId: task.taskId,
-        workloadType: job.type,
-        image: job.image,
-        command: job.command,
-        timeout: 600_000,
-      });
+
+      // Do not inject trust challenges alongside ML work (confusing ~4s tasks without [ML])
+      if (!isMl) {
+        const injectChallenge =
+          this.nodeStore.shouldChallenge(nodeId) && Math.random() < 0.35;
+        if (injectChallenge) {
+          const ch = this.challenges.createChallenge(nodeId);
+          this.ws.sendToNode(nodeId, {
+            type: "TASK_DISPATCH",
+            taskId: ch.taskId,
+            workloadType: ch.type,
+            image: ch.image,
+            command: ch.command,
+            timeout: 300_000,
+          });
+        }
+      }
+    });
+
+    if (sentCount > 0) {
+      const j = this.jobs.getJob(job.jobId);
+      if (j && j.status === "waiting_nodes") j.status = "running";
       this.ws.broadcastJob(job.jobId, {
         type: "JOB_UPDATE",
         jobId: job.jobId,
         status: "running",
         progress: 0,
-        activeNodes: new Set(nodeIds).size,
+        activeNodes: sentCount,
+        message: job.ml ? "ML training dispatched to compute node(s)" : undefined,
       });
-    });
+    }
   }
 
   maybeDispatchWaitingJobs() {
     for (const job of this.jobs.jobs.values()) {
-      if (job.status === "waiting_nodes") {
-        this.dispatchJobTasks(job);
+      if (job.status !== "waiting_nodes") continue;
+      for (const taskId of job.taskIds) {
+        const t = this.jobs.getTask(taskId);
+        if (t?.status === "dispatched") {
+          t.status = "queued";
+          t.nodeId = null;
+          t.startedAt = null;
+          this.taskAssignments.delete(taskId);
+        }
       }
+      this.dispatchJobTasks(job);
     }
   }
 
@@ -159,15 +215,21 @@ class Scheduler {
     if (ok) this.taskAssignments.set(ch.taskId, nodeId);
   }
 
-  handleNodeMessage(nodeId, msg) {
+  async handleNodeMessage(nodeId, msg) {
     switch (msg.type) {
       case "NODE_HELLO":
-        this.nodeStore.register(nodeId, {
+        await this.nodeStore.register(nodeId, {
           cpu: msg.cpu,
           memory: msg.memory,
           gpu: msg.gpu,
           network: msg.network,
+          connected: true,
         });
+        this.nodeStore.setConnected(nodeId, true);
+        const helloNode = this.nodeStore.get(nodeId);
+        if (helloNode && helloNode.status === "offline") {
+          helloNode.status = "active";
+        }
         this.nodeStore.updateHeartbeat(nodeId, {
           cpuUsage: 0,
           memoryUsage: 0,
@@ -182,6 +244,7 @@ class Scheduler {
           memoryUsage: msg.memoryUsage,
           activeTasks: msg.activeTasks,
         });
+        this.maybeDispatchWaitingJobs();
         break;
       case "TASK_PROGRESS": {
         const task = this.jobs.getTask(msg.taskId);
@@ -262,6 +325,7 @@ class Scheduler {
 
   aggregate(job) {
     const parts = job.results.sort((a, b) => a.shardIndex - b.shardIndex);
+    if (job.ml) return aggregateMlResults(parts);
     if (parts.length === 1) return parts[0].result;
     return JSON.stringify(parts.map((p) => p.result));
   }

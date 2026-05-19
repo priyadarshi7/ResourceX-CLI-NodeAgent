@@ -3,29 +3,56 @@
 const express = require("express");
 const { body, validationResult } = require("express-validator");
 const { requireUserAuth } = require("../middleware/auth");
+const { isMlTrainingJob, normalizeMlTrainingJob } = require("../lib/mlJobs");
+const { aggregateMlResults } = require("../lib/mlAggregate");
+const { loadPersistedJob } = require("../lib/jobPersistence");
 
 function createJobsRouter(rt) {
   const r = express.Router();
   const auth = requireUserAuth(rt);
 
+  const skipForMl = (_value, { req }) => !isMlTrainingJob(req.body);
+
   r.post(
     "/",
     auth,
-    body("image").isString().isLength({ min: 1 }),
-    body("command").isString().isLength({ min: 1 }),
     body("jobId").optional().isString(),
     body("type").optional().isString(),
     body("parallelism").optional().isInt({ min: 1, max: 64 }),
+    body("image").if(skipForMl).isString().isLength({ min: 1 }),
+    body("command").if(skipForMl).isString().isLength({ min: 1 }),
+    body("dataset").if((v, { req }) => isMlTrainingJob(req.body)).isObject(),
+    body("training").if((v, { req }) => isMlTrainingJob(req.body)).isObject(),
     async (req, res) => {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
         res.status(400).json({ errors: errors.array() });
         return;
       }
-      const job = rt.jobRegistry.createJob({
-        ...req.body,
-        submittedBy: req.user.email,
-      });
+
+      let spec;
+      try {
+        if (isMlTrainingJob(req.body)) {
+          spec = normalizeMlTrainingJob({
+            ...req.body,
+            submittedBy: req.user.email,
+          });
+        } else {
+          if (!req.body.image || !req.body.command) {
+            res.status(400).json({
+              error:
+                'Generic jobs need "image" and "command". ML jobs need type "ml_training" with "dataset" and "training" blocks.',
+            });
+            return;
+          }
+          spec = { ...req.body, submittedBy: req.user.email };
+        }
+      } catch (e) {
+        res.status(400).json({ error: e.message });
+        return;
+      }
+
+      const job = rt.jobRegistry.createJob(spec);
 
       await rt.queue.add(
         "dispatchJob",
@@ -33,8 +60,6 @@ function createJobsRouter(rt) {
         { jobId: job.jobId, removeOnComplete: true, removeOnFail: false },
       );
 
-      // Try immediately so a connected node gets work even if the worker is slow;
-      // BullMQ worker may call again — dispatch only tasks still in `queued` state.
       rt.scheduler.dispatchJobTasks(rt.jobRegistry.getJob(job.jobId) || job);
 
       const host = req.get("host") || `localhost:${process.env.PORT || 4000}`;
@@ -42,28 +67,48 @@ function createJobsRouter(rt) {
       res.status(202).json({
         jobId: job.jobId,
         status: job.status,
+        type: job.type,
         parallelism: job.parallelism,
+        ml: job.ml || false,
         ws: `${proto}://${host}/ws/jobs?token=<user_jwt>`,
         hint: "Connect with a user JWT, then send { type: 'SUBSCRIBE_JOB', jobId }",
       });
     },
   );
 
-  r.get("/:jobId", auth, (req, res) => {
-    const job = rt.jobRegistry.getJob(req.params.jobId);
+  r.get("/:jobId", auth, async (req, res) => {
+    const jobId = req.params.jobId;
+    let job = rt.jobRegistry.getJob(jobId);
+    let tasks = job ? rt.jobRegistry.listJobTasks(jobId) : [];
+
     if (!job) {
+      const persisted = await loadPersistedJob(jobId);
+      if (!persisted) {
+        res.status(404).json({
+          error:
+            "Job not found. It may have expired if the backend restarted before results were saved.",
+        });
+        return;
+      }
+      if (
+        persisted.submittedBy &&
+        persisted.submittedBy !== req.user.email
+      ) {
+        res.status(404).json({ error: "Job not found" });
+        return;
+      }
+      job = persisted;
+      tasks = persisted.tasks || [];
+    } else if (job.submittedBy && job.submittedBy !== req.user.email) {
       res.status(404).json({ error: "Job not found" });
       return;
     }
-    const tasks = rt.jobRegistry.listJobTasks(job.jobId);
 
     let result = null;
-    if (job.status === "completed" && job.results && job.results.length > 0) {
-      const parts = [...job.results].sort((a, b) => a.shardIndex - b.shardIndex);
-      result =
-        parts.length === 1
-          ? parts[0].result
-          : parts.map((p) => p.result);
+    const results = job.results || [];
+    if (job.status === "completed" && results.length > 0) {
+      const parts = [...results].sort((a, b) => a.shardIndex - b.shardIndex);
+      result = job.ml ? aggregateMlResults(parts) : parts[0].result;
     }
 
     res.json({
@@ -71,6 +116,9 @@ function createJobsRouter(rt) {
       status: job.status,
       type: job.type,
       parallelism: job.parallelism,
+      ml: job.ml || false,
+      dataset: job.dataset || undefined,
+      training: job.training || undefined,
       completedTasks: job.completedTasks,
       confidenceScore: job.confidenceScore,
       validated: job.status === "completed" ? "ACRS" : undefined,

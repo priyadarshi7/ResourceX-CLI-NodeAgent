@@ -23,21 +23,27 @@ When a challenge finishes, the backend **compares the output** to ground truth a
 
 ---
 
-## Architecture (no MongoDB)
+## Architecture
 
 | Piece | Role |
 |--------|------|
 | **Redis** | **Required.** BullMQ queue (`resourcex-jobs`) so job dispatch runs reliably. |
-| **MongoDB** | **Not used.** Users, nodes, and active jobs live **in memory** in the backend process (lost on restart). |
+| **MongoDB** | **Users** and **node trust/registration** persist (`MONGODB_URI`). |
+| **In memory** | Active jobs, task graph, and live WebSocket connection state (cleared on backend restart). |
 | **Backend** | REST + JWT; WebSocket to nodes (`/ws/node`) and submitters (`/ws/jobs`); scheduler + ACRS challenge engine. |
 | **Compute node** | `resourcex-node` — executes tasks (Docker by default), streams progress/results. |
 | **Submitter** | Registers/logs in, obtains a **user JWT**, `POST /api/jobs` or `resourcex submit`. |
+
+**Inter-device:** all nodes and submitters must use the **same** backend URL. See **[deploy.md](./deploy.md)** for LAN, Docker, and cloud setup.
+
+**ML training (large datasets):** see **[docs/ml-training.md](./docs/ml-training.md)** — shard URLs, distributed `parallelism`, GPU, and custom `train.py`.
 
 ---
 
 ## Prerequisites
 
 - **Node.js** 18+ recommended  
+- **MongoDB** reachable by the backend (local Docker, Atlas, or `npm run mongo:up`)  
 - **Redis** reachable by the backend (local Docker, cloud, or **Upstash**)  
 - **Docker** on each compute node if you want real container execution (omit `--no-docker` only when Docker is installed)
 
@@ -57,6 +63,9 @@ When a challenge finishes, the backend **compares the output** to ground truth a
 | `REDIS_PORT` | `6379` | |
 | `REDIS_PASSWORD` | — | Optional. |
 | `REDIS_TLS` | — | Set `1` or `true` if the server requires TLS but you are **not** using a `rediss://` URL. |
+| `HOST` | `0.0.0.0` | Bind address; use `0.0.0.0` so other devices on the LAN can connect. |
+| `MONGODB_URI` | `mongodb://127.0.0.1:27017/resourcex` | MongoDB connection string. |
+| `MONGODB_DB` | (from URI path) | Optional database name override. |
 
 ### Job submitter (CLI or scripts)
 
@@ -354,9 +363,9 @@ WebSockets:
 
 ## 8. Limitations (demo / single backend)
 
-- Backend restart **clears** users, nodes, and jobs in memory; **Redis** may still hold old BullMQ keys until TTL/cleanup.
+- Backend restart **clears in-flight jobs** and connection state; **users** and **node trust** remain in MongoDB.
 - **Admin** routes are open; add auth before any public deployment.
-- For **production**, plan a real database for users/jobs and hardened auth.
+- For full production, consider Postgres for jobs and hardened admin auth — see **[deploy.md](./deploy.md)**.
 
 ---
 
@@ -365,6 +374,9 @@ WebSockets:
 | Script | Purpose |
 |--------|---------|
 | `npm run redis:up` | Start local Redis (Docker Compose). |
-| `npm run redis:down` | Stop local Redis stack. |
+| `npm run mongo:up` | Start local MongoDB (Docker Compose). |
+| `npm run redis:down` | Stop Compose stack. |
+| `npm run deploy:up` | Build and start **backend + Redis** (Docker). |
+| `npm run deploy:down` | Stop full deploy stack. |
 | `npm run dev:backend` | Run backend with nodemon. |
 | `npm run dev` | Backend + dashboard placeholder (if configured). |

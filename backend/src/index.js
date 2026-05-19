@@ -10,10 +10,13 @@ const { Scheduler } = require("./services/scheduler");
 const { ChallengeEngine } = require("./services/challenge");
 const { JobRegistry } = require("./services/jobRegistry");
 const { createJobQueue } = require("./lib/queue");
+const { connectDb, closeDb, getMongoUri, getDbName } = require("./lib/db");
 
 const PORT = Number(process.env.PORT || 4000);
+const HOST = process.env.HOST || "0.0.0.0";
 
 async function main() {
+  await connectDb();
   const { queue, connection } = createJobQueue();
   const nodeStore = new NodeStateStore();
   const jobRegistry = new JobRegistry();
@@ -51,9 +54,16 @@ async function main() {
   const worker = await initWorkers(rt);
   rt.worker = worker;
 
-  server.listen(PORT, () => {
+  server.listen(PORT, HOST, () => {
     console.log(`\n  ResourceX Backend`);
-    console.log(`     HTTP  → http://localhost:${PORT}`);
+    console.log(`     Listen  → ${HOST}:${PORT}`);
+    const uri = getMongoUri();
+    const atlas = uri.includes("mongodb.net") || uri.startsWith("mongodb+srv:");
+    console.log(
+      `     MongoDB → database "${getDbName()}" (${atlas ? "Atlas" : "local"})`,
+    );
+    console.log(`     Users   → collection "users" in that database`);
+    console.log(`     HTTP    → http://localhost:${PORT}`);
     console.log(`     Node WS → ws://localhost:${PORT}/ws/node?token=<jwt>`);
     console.log(`     Jobs WS → ws://localhost:${PORT}/ws/jobs?token=<jwt>\n`);
   });
@@ -74,7 +84,10 @@ async function main() {
     } catch (e) {
       console.error(e);
     }
-    server.close(() => process.exit(0));
+    server.close(async () => {
+      await closeDb();
+      process.exit(0);
+    });
   }
 
   process.once("SIGTERM", shutdown);

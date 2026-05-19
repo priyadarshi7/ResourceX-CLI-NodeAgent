@@ -1,0 +1,30 @@
+{
+  "jobId": "ml_mnist_hf_001",
+  "type": "ml_training",
+  "parallelism": 1,
+  "dataset": {
+    "source": "huggingface",
+    "huggingface": {
+      "dataset": "mstz/adult",
+      "split": "train"
+    }
+  },
+  "training": {
+    "framework": "pytorch",
+    "entrypoint": "pip install -q torch pandas datasets && python /workspace/train.py",
+    "hyperparameters": {
+      "epochs": 3,
+      "batch_size": 64,
+      "lr": 0.01
+    }
+  },
+  "resources": {
+    "cpus": 2,
+    "memory": "6g",
+    "timeout": 3600000,
+    "network": true
+  },
+  "constraints": {
+    "reliability": "medium"
+  }
+}

@@ -9,8 +9,12 @@
     "cli"
   ],
   "scripts": {
-    "redis:up": "docker compose up -d",
+    "redis:up": "docker compose up -d redis",
+    "mongo:up": "docker compose up -d mongo",
     "redis:down": "docker compose down",
+    "deploy:up": "docker compose up -d --build",
+    "deploy:down": "docker compose down",
+    "deploy:logs": "docker compose logs -f backend",
     "dev:backend": "cd backend && npm run dev",
     "dev:dashboard": "cd dashboard && npm run dev",
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:dashboard\""

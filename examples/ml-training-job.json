@@ -1,0 +1,33 @@
+{
+  "jobId": "ml_iris_001",
+  "type": "ml_training",
+  "parallelism": 1,
+  "dataset": {
+    "source": "urls",
+    "urls": [
+      "https://raw.githubusercontent.com/plotly/datasets/master/iris.csv"
+    ],
+    "format": "csv",
+    "mountPath": "/data"
+  },
+  "training": {
+    "framework": "pytorch",
+    "entrypoint": "pip install -q torch pandas && python /workspace/train.py",
+    "hyperparameters": {
+      "epochs": 5,
+      "batch_size": 16,
+      "lr": 0.01
+    },
+    "modelType": "mlp"
+  },
+  "resources": {
+    "cpus": 2,
+    "memory": "4g",
+    "timeout": 3600000,
+    "network": true,
+    "gpu": false
+  },
+  "constraints": {
+    "reliability": "medium"
+  }
+}

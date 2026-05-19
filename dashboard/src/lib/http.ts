@@ -33,6 +33,28 @@ export async function jsonRequest<T>(
   return data as T;
 }
 
+export async function uploadFiles<T>(
+  path: string,
+  token: string,
+  files: File[],
+  fields?: Record<string, string>,
+): Promise<T> {
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  if (fields) {
+    for (const [k, v] of Object.entries(fields)) form.append(k, v);
+  }
+  const res = await fetch(`${BACKEND_URL.replace(/\/$/, "")}${path}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: form,
+  });
+  const text = await res.text();
+  const data = text ? safeJsonParse(text) : null;
+  if (!res.ok) throw new HttpError(res.status, data);
+  return data as T;
+}
+
 function safeJsonParse(s: string) {
   try {
     return JSON.parse(s);
@@ -40,4 +62,3 @@ function safeJsonParse(s: string) {
     return s;
   }
 }
-

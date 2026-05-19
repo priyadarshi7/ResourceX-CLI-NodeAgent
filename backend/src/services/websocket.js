@@ -67,12 +67,14 @@ function initWebSocket(server, ctx) {
     const nodeId = String(payload.nodeId);
     ws.nodeId = nodeId;
     nodeSockets.set(nodeId, ws);
-    ctx.nodeStore.setConnected(nodeId, true);
+    console.log(`[ws/node] connected ${nodeId.slice(0, 8)}…`);
 
     ws.on("message", (raw) => {
       try {
         const msg = JSON.parse(raw.toString());
-        ctx.scheduler.handleNodeMessage(nodeId, msg);
+        ctx.scheduler.handleNodeMessage(nodeId, msg).catch((e) => {
+          console.error("[ws/node] handler error", e.message);
+        });
       } catch (e) {
         console.error("[ws/node] bad message", e.message);
       }
@@ -81,6 +83,8 @@ function initWebSocket(server, ctx) {
     ws.on("close", () => {
       if (nodeSockets.get(nodeId) === ws) nodeSockets.delete(nodeId);
       ctx.nodeStore.markDisconnected(nodeId);
+      ctx.scheduler.maybeDispatchWaitingJobs();
+      console.log(`[ws/node] disconnected ${nodeId.slice(0, 8)}…`);
     });
 
     ws.send(JSON.stringify({ type: "PING", ts: Date.now() }));

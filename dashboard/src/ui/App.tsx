@@ -3,9 +3,10 @@ import { BACKEND_URL } from "../lib/config";
 import { useAuth } from "./auth";
 import { NodesView } from "./NodesView";
 import { JobsView } from "./JobsView";
+import { StudioView } from "./StudioView";
 import { LoginCard } from "./LoginCard";
 
-type Tab = "nodes" | "jobs";
+type Tab = "nodes" | "jobs" | "studio";
 
 // ─── CSS-in-JS styles ───────────────────────────────────────────────────────
 
@@ -360,6 +361,184 @@ const styles = `
   }
 
   /* ── Responsive ──────────────────────────────────────────────────────── */
+  /* ── Studio (Colab-like) ───────────────────────────────────────────── */
+  .rx-btn-primary {
+    border-color: var(--rx-brand) !important;
+    background: var(--rx-brand-dim) !important;
+    color: #c4b5fd !important;
+  }
+  .rx-btn-primary:hover {
+    background: rgba(124,58,237,0.25) !important;
+    color: #fff !important;
+  }
+  .rx-studio-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--rx-border);
+  }
+  .rx-studio-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-family: var(--rx-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    color: var(--rx-text-muted);
+  }
+  .rx-studio-field input {
+    width: 72px;
+    padding: 6px 8px;
+    background: var(--rx-surface2);
+    border: 1px solid var(--rx-border);
+    border-radius: 3px;
+    color: var(--rx-text);
+    font-family: var(--rx-mono);
+    font-size: 12px;
+  }
+  .rx-studio-jobid code {
+    font-family: var(--rx-mono);
+    font-size: 11px;
+    color: var(--rx-accent);
+  }
+  .rx-studio-error {
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    border-radius: 4px;
+    background: rgba(239,68,68,0.1);
+    border: 1px solid rgba(239,68,68,0.35);
+    color: #fca5a5;
+    font-size: 13px;
+  }
+  .rx-studio-grid {
+    display: grid;
+    grid-template-columns: 220px 1fr 280px;
+    gap: 16px;
+    min-height: 520px;
+  }
+  @media (max-width: 960px) {
+    .rx-studio-grid { grid-template-columns: 1fr; }
+  }
+  .rx-studio-sidebar, .rx-studio-editor, .rx-studio-output {
+    background: var(--rx-surface2);
+    border: 1px solid var(--rx-border);
+    border-radius: 4px;
+    padding: 14px;
+    overflow: auto;
+  }
+  .rx-studio-sidebar h3, .rx-studio-editor h3, .rx-studio-output h3 {
+    font-family: var(--rx-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--rx-text-muted);
+    margin-bottom: 10px;
+  }
+  .rx-studio-hint {
+    font-size: 12px;
+    color: var(--rx-text-muted);
+    margin-bottom: 12px;
+    line-height: 1.5;
+  }
+  .rx-studio-dataset-list {
+    list-style: none;
+    margin-top: 12px;
+  }
+  .rx-studio-dataset-list li {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--rx-border);
+  }
+  .rx-studio-dataset-list label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .rx-studio-ds-meta {
+    font-size: 11px;
+    color: var(--rx-text-muted);
+    font-family: var(--rx-mono);
+  }
+  .rx-studio-empty {
+    color: var(--rx-text-faint);
+    font-size: 12px;
+  }
+  .rx-studio-cell {
+    margin-bottom: 12px;
+  }
+  .rx-studio-cell-label {
+    display: block;
+    font-family: var(--rx-mono);
+    font-size: 10px;
+    color: var(--rx-text-muted);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+  }
+  .rx-studio-cell textarea {
+    width: 100%;
+    background: var(--rx-bg);
+    border: 1px solid var(--rx-border);
+    border-radius: 4px;
+    color: var(--rx-text);
+    font-size: 13px;
+    padding: 10px;
+    resize: vertical;
+    line-height: 1.5;
+  }
+  .rx-studio-code {
+    font-family: var(--rx-mono) !important;
+    font-size: 12px !important;
+    tab-size: 2;
+  }
+  .rx-studio-log, .rx-studio-result {
+    font-family: var(--rx-mono);
+    font-size: 11px;
+    background: var(--rx-bg);
+    border: 1px solid var(--rx-border);
+    border-radius: 4px;
+    padding: 10px;
+    max-height: 240px;
+    overflow: auto;
+    white-space: pre-wrap;
+    margin-top: 10px;
+    color: var(--rx-text-muted);
+  }
+  .rx-studio-status {
+    font-size: 13px;
+    margin-bottom: 8px;
+  }
+  .rx-studio-metrics {
+    margin-top: 10px;
+  }
+  .rx-studio-metrics pre {
+    font-family: var(--rx-mono);
+    font-size: 11px;
+    background: var(--rx-bg);
+    border: 1px solid var(--rx-border);
+    border-radius: 4px;
+    padding: 8px;
+    margin-top: 6px;
+    max-height: 160px;
+    overflow: auto;
+  }
+  .rx-studio-task-list {
+    list-style: none;
+    font-family: var(--rx-mono);
+    font-size: 11px;
+    color: var(--rx-text-muted);
+    margin: 8px 0;
+  }
+  .rx-studio-task-list li {
+    padding: 2px 0;
+  }
+  [hidden] {
+    display: none !important;
+  }
+
   @media (max-width: 600px) {
     .rx-shell { padding: 0 16px 32px; }
     .rx-chip { display: none; }
@@ -407,7 +586,11 @@ export function App() {
   const auth = useAuth();
   const [tab, setTab] = useState<Tab>("nodes");
 
-  const title = useMemo(() => (tab === "nodes" ? "NODES" : "JOBS"), [tab]);
+  const title = useMemo(() => {
+    if (tab === "nodes") return "NODES";
+    if (tab === "studio") return "STUDIO";
+    return "JOBS";
+  }, [tab]);
 
   return (
     <>
@@ -479,6 +662,19 @@ export function App() {
               </a>
               <a
                 role="tab"
+                aria-selected={tab === "studio"}
+                className={`rx-tab ${tab === "studio" ? "active" : ""}`}
+                href="#studio"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setTab("studio");
+                }}
+              >
+                Studio
+                <span className="rx-tab-count">⌘</span>
+              </a>
+              <a
+                role="tab"
                 aria-selected={tab === "jobs"}
                 className={`rx-tab ${tab === "jobs" ? "active" : ""}`}
                 href="#jobs"
@@ -492,10 +688,17 @@ export function App() {
               </a>
             </nav>
 
-            {/* ── Panel ───────────────────────────────────────────────── */}
+            {/* ── Panel (keep mounted so Studio job state survives tab switches) */}
             <div className="rx-panel" role="tabpanel">
-              {tab === "nodes" ? <NodesView token={auth.token} /> : null}
-              {tab === "jobs" ? <JobsView token={auth.token} /> : null}
+              <div hidden={tab !== "nodes"}>
+                <NodesView token={auth.token} />
+              </div>
+              <div hidden={tab !== "studio"}>
+                <StudioView token={auth.token} active={tab === "studio"} />
+              </div>
+              <div hidden={tab !== "jobs"}>
+                <JobsView token={auth.token} />
+              </div>
             </div>
           </>
         )}

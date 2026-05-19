@@ -1,0 +1,33 @@
+{
+  "jobId": "ml_sharded_001",
+  "type": "ml_training",
+  "parallelism": 2,
+  "dataset": {
+    "source": "urls",
+    "urls": [
+      "https://raw.githubusercontent.com/plotly/datasets/master/iris.csv",
+      "https://raw.githubusercontent.com/plotly/datasets/master/iris.csv"
+    ],
+    "format": "csv"
+  },
+  "training": {
+    "framework": "pytorch",
+    "entrypoint": "pip install -q torch pandas && python /workspace/train.py",
+    "hyperparameters": {
+      "epochs": 10,
+      "batch_size": 32,
+      "lr": 0.001
+    },
+    "modelType": "mlp"
+  },
+  "resources": {
+    "cpus": 4,
+    "memory": "8g",
+    "timeout": 7200000,
+    "network": true,
+    "gpu": false
+  },
+  "constraints": {
+    "reliability": "medium"
+  }
+}

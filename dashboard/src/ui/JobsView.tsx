@@ -7,18 +7,29 @@ export function JobsView(props: { token: string }) {
   const [spec, setSpec] = useState(
     JSON.stringify(
       {
-        jobId: "demo_ml_001",
+        jobId: "ml_iris_001",
         type: "ml_training",
-        image: "python:3.10-alpine",
-        command: 'python -c "print(\'hello from shard\')"',
         parallelism: 1,
-        constraints: { latency: "low", reliability: "high" },
+        dataset: {
+          source: "urls",
+          urls: [
+            "https://raw.githubusercontent.com/plotly/datasets/master/iris.csv",
+          ],
+        },
+        training: {
+          framework: "pytorch",
+          entrypoint:
+            "pip install -q torch pandas && python /workspace/train.py",
+          hyperparameters: { epochs: 3, batch_size: 16, lr: 0.01 },
+        },
+        resources: { cpus: 2, memory: "4g", timeout: 3600000, network: true },
+        constraints: { reliability: "medium" },
       },
       null,
       2,
     ),
   );
-  const [jobId, setJobId] = useState("demo_ml_001");
+  const [jobId, setJobId] = useState("ml_iris_001");
   const [status, setStatus] = useState<JobStatus | null>(null);
   const [events, setEvents] = useState<JobUpdateMsg[]>([]);
   const [error, setError] = useState<string>("");

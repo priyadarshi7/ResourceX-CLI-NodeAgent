@@ -10,14 +10,14 @@ function createNodesRouter(rt) {
   const r = express.Router();
   const nodeAuth = requireNodeAuth(rt);
 
-  r.delete("/me", nodeAuth, (req, res) => {
+  r.delete("/me", nodeAuth, async (req, res) => {
     const nodeId = req.node.nodeId;
     rt.challengeEngine.cancelPendingForNode(nodeId);
     rt.scheduler.forgetNode(nodeId);
     if (typeof rt.disconnectNode === "function") {
       rt.disconnectNode(nodeId);
     }
-    rt.nodeStore.remove(nodeId);
+    await rt.nodeStore.remove(nodeId);
     res.json({ ok: true, nodeId, message: "Node removed from pool" });
   });
 
@@ -58,7 +58,7 @@ function createNodesRouter(rt) {
         }
       }
 
-      const node = rt.nodeStore.register(nodeId, {
+      const node = await rt.nodeStore.register(nodeId, {
         email,
         cpu,
         memory,
@@ -68,6 +68,8 @@ function createNodesRouter(rt) {
         network: network || {},
         challengeScore: 0.5,
         trustTier: "COLD_START",
+        connected: false,
+        status: "offline",
       });
 
       const token = await signNodeToken({ email, nodeId });

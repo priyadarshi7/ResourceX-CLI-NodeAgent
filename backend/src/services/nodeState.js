@@ -1,6 +1,11 @@
 "use strict";
 
 const { EventEmitter } = require("events");
+const {
+  loadPersistedNode,
+  saveNodeState,
+  removePersistedNode,
+} = require("../lib/nodePersistence");
 
 const TRUST_TIERS = {
   COLD_START: {
@@ -25,6 +30,12 @@ function getTier(score) {
   return score >= 1.0 ? "ELITE" : "COLD_START";
 }
 
+function persistNode(node) {
+  saveNodeState(node).catch((err) =>
+    console.error("[db] save node", node.nodeId, err.message),
+  );
+}
+
 class NodeStateStore extends EventEmitter {
   constructor() {
     super();
@@ -32,8 +43,9 @@ class NodeStateStore extends EventEmitter {
     this.nodes = new Map();
   }
 
-  register(nodeId, info) {
-    const existing = this.nodes.get(nodeId) || {};
+  async register(nodeId, info) {
+    const persisted = await loadPersistedNode(nodeId);
+    const existing = this.nodes.get(nodeId) || persisted || {};
     const state = {
       ...existing,
       nodeId,
@@ -46,14 +58,20 @@ class NodeStateStore extends EventEmitter {
       challengesFailed: existing.challengesFailed ?? 0,
       lastSeen: Date.now(),
       lastChallenge: existing.lastChallenge ?? null,
-      connected: !!existing.connected,
-      status: existing.status || "active",
+      connected: info.connected !== undefined ? !!info.connected : false,
+      status:
+        info.connected === false
+          ? "offline"
+          : existing.status === "offline" || !existing.status
+            ? "active"
+            : existing.status,
       registeredAt: existing.registeredAt ?? Date.now(),
-      cpuUsage: 0,
-      memoryUsage: 0,
-      activeTasks: 0,
+      cpuUsage: existing.cpuUsage ?? 0,
+      memoryUsage: existing.memoryUsage ?? 0,
+      activeTasks: existing.activeTasks ?? 0,
     };
     this.nodes.set(nodeId, state);
+    persistNode(state);
     this.emit("nodeRegistered", state);
     return state;
   }
@@ -108,6 +126,7 @@ class NodeStateStore extends EventEmitter {
       newTier,
       success,
     });
+    persistNode(node);
     return node;
   }
 
@@ -120,17 +139,22 @@ class NodeStateStore extends EventEmitter {
       memoryUsage: data.memoryUsage,
       activeTasks: data.activeTasks,
       connected: true,
+      status: node.status === "offline" ? "active" : node.status,
     });
+    persistNode(node);
   }
 
   setConnected(nodeId, connected) {
     const node = this.nodes.get(nodeId);
     if (!node) return;
     node.connected = connected;
-    if (!connected) {
+    if (connected) {
+      if (node.status === "offline") node.status = "active";
+    } else {
       node.status = "offline";
       this.emit("nodeDisconnected", { nodeId });
     }
+    persistNode(node);
   }
 
   markDisconnected(nodeId) {
@@ -139,11 +163,12 @@ class NodeStateStore extends EventEmitter {
 
   /**
    * Remove node from the pool (deregister). Idempotent.
-   * @returns {boolean} whether a row existed and was deleted
+   * @returns {Promise<boolean>} whether a row existed and was deleted
    */
-  remove(nodeId) {
+  async remove(nodeId) {
     const existed = this.nodes.delete(nodeId);
     if (existed) {
+      await removePersistedNode(nodeId);
       this.emit("nodeRemoved", { nodeId });
     }
     return existed;
@@ -151,7 +176,10 @@ class NodeStateStore extends EventEmitter {
 
   incrementTaskCount(nodeId) {
     const node = this.nodes.get(nodeId);
-    if (node) node.tasksCompleted++;
+    if (node) {
+      node.tasksCompleted++;
+      persistNode(node);
+    }
   }
 
   shouldChallenge(nodeId) {
